@@ -10,6 +10,8 @@ module Jekyll
       File.open(dest, 'w') do |f|
         f.write(content)
       end
+    rescue => e
+      Jekyll.logger.error "Error writing to file:", "#{dest} - #{e.message}"
     end
 
     def output_compressed(path, context)
@@ -34,11 +36,12 @@ module Jekyll
     end
 
     def output_html(path, content)
-      if ( ENV['JEKYLL_ENV'] == "production" )
+      if ENV['JEKYLL_ENV'] == "production"
+        puts "Compressing HTML file: #{path}"
         html_args = { remove_comments: true, compress_css: true, compress_javascript: true, preserve_patterns: [] }
         js_args = {}
-
         opts = @site.config['jekyll-minifier']
+
         if ( !opts.nil? )
           # Javascript Arguments
           js_args[:terser_args] = Hash[opts['terser_args'].map{|(k,v)| [k.to_sym,v]}] if opts.has_key?('terser_args')
@@ -67,39 +70,48 @@ module Jekyll
           html_args[:preserve_patterns]          += opts['preserve_patterns'].map { |pattern| Regexp.new(pattern)} if opts.has_key?('preserve_patterns')
         end
 
-        html_args[:css_compressor]              = CSSminify2.new()
+        html_args[:css_compressor] = CSSminify2.new()
 
-        if ( !js_args[:terser_args].nil? )
-          html_args[:javascript_compressor]       = ::Terser.new(js_args[:terser_args])
+        if !js_args[:terser_args].nil?
+          html_args[:javascript_compressor] = ::Terser.new(js_args[:terser_args])
         else
-          html_args[:javascript_compressor]       = ::Terser.new()
+          html_args[:javascript_compressor] = ::Terser.new()
         end
 
-        compressor = HtmlCompressor::Compressor.new(html_args)
-        output_file(path, compressor.compress(content))
+        begin
+          compressor = HtmlCompressor::Compressor.new(html_args)
+          output_file(path, compressor.compress(content))
+        rescue => e
+          Jekyll.logger.error "HTML compression failed for:", "#{path} - #{e.message}"
+        end
       else
         output_file(path, content)
       end
     end
 
     def output_js(path, content)
-      if ( ENV['JEKYLL_ENV'] == "production" )
+      if ENV['JEKYLL_ENV'] == "production"
+        puts "Compressing JavaScript file: #{path}"
+
         js_args  = {}
-        opts     = @site.config['jekyll-minifier']
+        opts = @site.config['jekyll-minifier']
         compress = true
-        if ( !opts.nil? )
-          compress                = opts['compress_javascript']                           if opts.has_key?('compress_javascript')
-          js_args[:terser_args] = Hash[opts['terser_args'].map{|(k,v)| [k.to_sym,v]}] if opts.has_key?('terser_args')
+        unless opts.nil?
+          compress = opts['compress_javascript'] if opts.has_key?('compress_javascript')
+          js_args[:terser_args] = Hash[opts['terser_args'].map { |(k, v)| [k.to_sym, v] }] if opts.has_key?('terser_args')
         end
 
-        if ( compress )
-          if ( !js_args[:terser_args].nil? )
+        if compress
+          if !js_args[:terser_args].nil?
             compressor = ::Terser.new(js_args[:terser_args])
           else
             compressor = ::Terser.new()
           end
-
-          output_file(path, compressor.compile(content))
+          begin
+            output_file(path, compressor.compile(content))
+          rescue => e
+            Jekyll.logger.error "JavaScript compression failed for:", "#{path} - #{e.message}"
+          end
         else
           output_file(path, content)
         end
@@ -109,17 +121,12 @@ module Jekyll
     end
 
     def output_json(path, content)
-      if ( ENV['JEKYLL_ENV'] == "production" )
-        opts       = @site.config['jekyll-minifier']
-        compress = true
-        if ( !opts.nil? )
-          compress    = opts['compress_json']               if opts.has_key?('compress_json')
-        end
-
-        if ( compress )
+      if ENV['JEKYLL_ENV'] == "production"
+        puts "Compressing JSON file: #{path}"
+        begin
           output_file(path, JSON.minify(content))
-        else
-          output_file(path, content)
+        rescue => e
+          Jekyll.logger.error "JSON compression failed for:", "#{path} - #{e.message}"
         end
       else
         output_file(path, content)
@@ -127,82 +134,85 @@ module Jekyll
     end
 
     def output_css(path, content)
-      if ( ENV['JEKYLL_ENV'] == "production" )
-        opts       = @site.config['jekyll-minifier']
-        compress = true
-        if ( !opts.nil? )
-          compress    = opts['compress_css']               if opts.has_key?('compress_css')
-        end
-        if ( compress )
-          compressor = CSSminify2.new()
-          output_file(path, compressor.compress(content))
+      if ENV['JEKYLL_ENV'] == "production"
+        puts "Compressing CSS file: #{path}"
+        opts = @site.config['jekyll-minifier']
+        compress = opts.nil? || opts['compress_css'] != false
+
+        if compress
+          begin
+            compressor = CSSminify2.new()
+            output_file(path, compressor.compress(content))
+          rescue => e
+            Jekyll.logger.error "CSS compression failed for:", "#{path} - #{e.message}"
+          end
         else
           output_file(path, content)
         end
       else
         output_file(path, content)
       end
-
     end
+
 
     private
 
-    def exclude?(dest, dest_path)
-      file_name = dest_path.slice(dest.length+1..dest_path.length)
-      exclude.any? { |e| e == file_name || File.fnmatch(e, file_name) }
-    end
-
-    def exclude
-      @exclude ||= Array(@site.config.dig('jekyll-minifier', 'exclude'))
-    end
-  end
-
-  class Document
-    include Compressor
-
-    def write(dest)
-      dest_path = destination(dest)
-      if exclude?(dest, dest_path)
-        output_file(dest_path, output)
-      else
-        output_compressed(dest_path, output)
+      def exclude?(dest, dest_path)
+        file_name = dest_path.slice(dest.length+1..dest_path.length)
+        exclude.any? { |e| e == file_name || File.fnmatch(e, file_name) }
       end
-      trigger_hooks(:post_write)
-    end
-  end
 
-  class Page
-    include Compressor
-
-    def write(dest)
-      dest_path = destination(dest)
-      if exclude?(dest, dest_path)
-        output_file(dest_path, output)
-      else
-        output_compressed(dest_path, output)
+      def exclude
+        @exclude ||= Array(@site.config.dig('jekyll-minifier', 'exclude'))
       end
-      Jekyll::Hooks.trigger hook_owner, :post_write, self
-    end
-  end
-
-  class StaticFile
-    include Compressor
-
-    def copy_file(path, dest_path)
-      FileUtils.mkdir_p(File.dirname(dest_path))
-      FileUtils.cp(path, dest_path)
     end
 
-    def write(dest)
-      dest_path = destination(dest)
+    class Document
+      include Compressor
 
-      return false if File.exist?(dest_path) and !modified?
-      self.class.mtimes[path] = mtime
+      def write(dest)
+        dest_path = destination(dest)
+        if exclude?(dest, dest_path)
+          output_file(dest_path, output)
+        else
+          output_compressed(dest_path, output)
+        end
+        trigger_hooks(:post_write)
+      end
+    end
 
-      if exclude?(dest, dest_path)
-        copy_file(path, dest_path)
-      else
-        case File.extname(dest_path)
+    class Page
+      include Compressor
+
+      def write(dest)
+        dest_path = destination(dest)
+        if exclude?(dest, dest_path)
+          output_file(dest_path, output)
+        else
+          output_compressed(dest_path, output)
+        end
+        Jekyll::Hooks.trigger hook_owner, :post_write, self
+      end
+    end
+
+    class StaticFile
+      include Compressor
+
+      def copy_file(path, dest_path)
+        FileUtils.mkdir_p(File.dirname(dest_path))
+        FileUtils.cp(path, dest_path)
+      end
+
+      def write(dest)
+        dest_path = destination(dest)
+
+        return false if File.exist?(dest_path) and !modified?
+        self.class.mtimes[path] = mtime
+
+        if exclude?(dest, dest_path)
+          copy_file(path, dest_path)
+        else
+          case File.extname(dest_path)
           when '.js'
             if dest_path.end_with?('.min.js')
               copy_file(path, dest_path)
@@ -221,9 +231,9 @@ module Jekyll
             output_html(dest_path, File.read(path))
           else
             copy_file(path, dest_path)
+          end
         end
-      end
-      true
+        true
     end
   end
 end
