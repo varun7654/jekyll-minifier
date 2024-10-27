@@ -82,6 +82,7 @@ module Jekyll
           compressor = HtmlCompressor::Compressor.new(html_args)
           output_file(path, compressor.compress(content))
         rescue => e
+          output_file(path, content)
           Jekyll.logger.error "HTML compression failed for:", "#{path} - #{e.message}"
         end
       else
@@ -110,6 +111,7 @@ module Jekyll
           begin
             output_file(path, compressor.compile(content))
           rescue => e
+            output_file(path, content)
             Jekyll.logger.error "JavaScript compression failed for:", "#{path} - #{e.message}"
           end
         else
@@ -126,6 +128,7 @@ module Jekyll
         begin
           output_file(path, JSON.minify(content))
         rescue => e
+          output_file(path, content)
           Jekyll.logger.error "JSON compression failed for:", "#{path} - #{e.message}"
         end
       else
@@ -144,6 +147,7 @@ module Jekyll
             compressor = CSSminify2.new()
             output_file(path, compressor.compress(content))
           rescue => e
+            output_file(path, content)
             Jekyll.logger.error "CSS compression failed for:", "#{path} - #{e.message}"
           end
         else
